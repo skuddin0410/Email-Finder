@@ -1,5 +1,5 @@
 {
-  "buildCommand": "npm run build -w web",
+  "buildCommand": "cd web && npx vite build",
   "outputDirectory": "web/dist",
   "rewrites": [{ "source": "/api/(.*)", "destination": "/api" }],
   "functions": { "api/index.ts": { "maxDuration": 60 } }
