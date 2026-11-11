@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import net from 'node:net';
 
 export interface ProbeOpts { port: number; timeoutMs: number; helo: string; mailFrom: string }
@@ -59,4 +60,13 @@ export function smtpProbe(host: string, email: string, opts: ProbeOpts): Promise
       }
     });
   });
+}
+
+export type CatchAll = 'catch_all' | 'not_catch_all' | 'unknown';
+
+/** Probe a random mailbox that cannot exist; if the server accepts it, every address will be accepted. */
+export async function catchAllCheck(host: string, domain: string, opts: ProbeOpts, probe: typeof smtpProbe = smtpProbe): Promise<CatchAll> {
+  const local = `zz${randomBytes(6).toString('hex')}`;
+  const { outcome } = await probe(host, `${local}@${domain}`, opts);
+  return outcome === 'accept' ? 'catch_all' : outcome === 'reject' ? 'not_catch_all' : 'unknown';
 }
