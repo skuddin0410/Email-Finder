@@ -1,0 +1,15 @@
+{
+  "name": "email-finder",
+  "private": true,
+  "type": "module",
+  "workspaces": ["server", "web"],
+  "scripts": {
+    "test": "npm test -w server && npm test -w web",
+    "coverage": "npm run coverage -w server",
+    "e2e": "playwright test -c e2e/playwright.config.ts --trace off",
+    "dev:server": "npm run dev -w server",
+    "dev:web": "npm run dev -w web",
+    "build": "npm run build -w web"
+  },
+  "devDependencies": { "@playwright/test": "*" }
+}
