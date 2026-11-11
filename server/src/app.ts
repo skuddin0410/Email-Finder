@@ -1,7 +1,6 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import multipart from '@fastify/multipart';
 import rateLimit from '@fastify/rate-limit';
-import fastifyStatic from '@fastify/static';
 import type { Config } from './config.js';
 import { parseBulkCsv, type BulkOutcome } from './bulk.js';
 import { DomainLimiter, findEmail } from './engine/findEmail.js';
@@ -9,7 +8,7 @@ import type { Resolver } from './engine/mx.js';
 import type { smtpProbe } from './engine/smtp.js';
 import { InputError, type FindInput } from './engine/types.js';
 
-export interface AppDeps { config: Config; resolver?: Resolver; probe?: typeof smtpProbe; staticDir?: string; allowPrivateHosts?: boolean; /** Trust X-Forwarded-For. Enable ONLY behind a reverse proxy you control (e.g. Vercel). */ trustProxy?: boolean }
+export interface AppDeps { config: Config; resolver?: Resolver; probe?: typeof smtpProbe; /** Optional hook to serve a built UI. Kept out of this module because @fastify/static is ESM-only and breaks the Vercel function bundle. */ staticPlugin?: (app: FastifyInstance) => void; allowPrivateHosts?: boolean; /** Trust X-Forwarded-For. Enable ONLY behind a reverse proxy you control (e.g. Vercel). */ trustProxy?: boolean }
 
 const FIELDS: (keyof FindInput)[] = ['url', 'name', 'company', 'domain'];
 function readBody(body: unknown): FindInput {
@@ -31,7 +30,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   const engineDeps = { config, resolver: deps.resolver, probe: deps.probe, limiter, allowPrivateHosts: deps.allowPrivateHosts };
 
   // Registered before rate-limit so asset requests are not counted against the API limit.
-  if (deps.staticDir) app.register(fastifyStatic, { root: deps.staticDir });
+  deps.staticPlugin?.(app);
   app.register(rateLimit, {
     max: config.rateLimitPerMin,
     timeWindow: '1 minute',

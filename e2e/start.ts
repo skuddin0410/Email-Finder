@@ -1,4 +1,5 @@
 // Boots the real app (API + built web UI) against in-process fake SMTP servers. Used only by Playwright.
+import fastifyStatic from '@fastify/static';
 import { buildApp } from '../server/src/app.js';
 import { loadConfig } from '../server/src/config.js';
 import type { Resolver } from '../server/src/engine/mx.js';
@@ -20,6 +21,6 @@ const resolver: Resolver = {
 };
 
 const config = loadConfig({ SMTP_PORT: String(port), SMTP_TIMEOUT_MS: '1500', RATE_LIMIT_PER_MIN: '1000' });
-const app = buildApp({ config, resolver, allowPrivateHosts: true, staticDir: new URL('../web/dist', import.meta.url).pathname });
+const app = buildApp({ config, resolver, allowPrivateHosts: true, staticPlugin: (a) => a.register(fastifyStatic, { root: new URL('../web/dist', import.meta.url).pathname }) });
 await app.listen({ port: 4173, host: '127.0.0.1' });
 console.log('e2e server ready on :4173');

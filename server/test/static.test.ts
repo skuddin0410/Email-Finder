@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
+import fastifyStatic from '@fastify/static';
 import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
 
@@ -13,7 +14,7 @@ describe('static web app', () => {
   it('serves index.html at / and keeps JSON 404s under /api', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ef-static-'));
     writeFileSync(join(dir, 'index.html'), '<html>MARKER</html>');
-    app = buildApp({ config: loadConfig({}), staticDir: dir });
+    app = buildApp({ config: loadConfig({}), staticPlugin: (a) => a.register(fastifyStatic, { root: dir }) });
     const root = await app.inject({ url: '/' });
     expect(root.statusCode).toBe(200);
     expect(root.body).toContain('MARKER');
