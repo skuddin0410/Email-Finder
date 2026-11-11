@@ -3,12 +3,20 @@ import { mxLookup, type Resolver } from '../src/engine/mx.js';
 
 const err = (code: string) => Object.assign(new Error(code), { code });
 const stub = (o: Partial<Resolver>): Resolver => ({
-  resolveMx: async () => { throw err('ENODATA'); },
+  resolveMx: async (d) => { if (d === 'google.com') return [{ exchange: 'mx.google.test', priority: 1 }]; throw err('ENODATA'); },
   resolve4: async () => { throw err('ENOTFOUND'); },
   ...o,
 });
 
 describe('mxLookup', () => {
+  it('a resolver that says ENOTFOUND for everything (even google.com) -> dns_error, not no_mx', async () => {
+    const liar: Resolver = { resolveMx: async () => { throw err('ENOTFOUND'); }, resolve4: async () => { throw err('ENOTFOUND'); } };
+    expect(await mxLookup('gmail.com', liar)).toEqual({ error: 'dns_error' });
+  });
+  it('a healthy resolver still reports a genuinely missing domain as no_mx', async () => {
+    const r = stub({ resolveMx: async (d) => { if (d === 'google.com') return [{ exchange: 'm', priority: 1 }]; throw err('ENOTFOUND'); } });
+    expect(await mxLookup('nope-xyz.com', r)).toEqual({ error: 'no_mx' });
+  });
   it('sorts MX hosts by ascending priority', async () => {
     const r = stub({ resolveMx: async () => [{ exchange: 'b.mx', priority: 20 }, { exchange: 'a.mx', priority: 10 }] });
     expect(await mxLookup('x.com', r)).toEqual({ hosts: ['a.mx', 'b.mx'] });

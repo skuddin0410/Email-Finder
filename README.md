@@ -28,13 +28,14 @@ For development run `npm run dev:server` and `npm run dev:web` (Vite proxies `/a
 | `MAIL_FROM` | verify@localhost | Envelope sender for probes. **Use a real address on your domain** |
 | `RATE_LIMIT_PER_MIN` | 30 | Requests per IP per minute |
 | `DOMAIN_CONCURRENCY` | 2 | Simultaneous probes per target domain |
+| `BULK_DEADLINE_MS` | 120000 | Bulk uploads stop starting new rows after this; skipped rows say so and can be resubmitted |
 
 ### Port 25 is required
 Verification needs **outbound TCP port 25**. Many clouds (AWS, GCP, Azure, most PaaS) block it. If it is blocked, the app says **"Verification unavailable"** and returns unverified guesses (`unknown`, max 40 confidence) instead of false negatives. Use a VPS that allows port 25.
 
 ## API
 - `POST /api/find` `{ "url"?, "name"?, "domain" }` → `{ person, domain, catchAll, verificationAvailable, results: [{ email, pattern, status, confidence, reason }] }`
-- `POST /api/find/bulk` multipart field `file` (CSV with `url`, or `name` + `domain`) → `{ rows: [{ row, input, result?, error? }] }`
+- `POST /api/find/bulk` multipart field `file` (CSV with a `url` or `name` column **plus a `domain` column**; a `company` value that is a domain also works; bulk has its own lower rate limit) → `{ rows: [{ row, input, result?, error? }] }`
 - `GET /api/health`
 - Errors: `{ "error": { "code", "message" } }`; 400 invalid input, 422 unparseable LinkedIn URL, 429 rate limit.
 
@@ -42,17 +43,20 @@ A company *name* alone is not resolved to a domain; supply the domain.
 
 ## Tests
 ```bash
-npm test                 # server (116) + web (9) unit/integration tests
+npm test                 # server (170) + web (9) unit/integration tests
 npm run coverage         # engine coverage, threshold 90%
 npm run e2e              # Playwright: real server + fake SMTP servers + browser
 npm run smoke -w server -- "Jane Doe" acme.com   # MANUAL live check, needs port 25 + real DNS
 ```
 Protocol tests run against an in-process fake SMTP server (accept, reject, catch-all, greylist, slow, dropped connection), so real handshake paths are exercised without touching the internet.
 
-**Not verified in the build sandbox:** live DNS and live SMTP. That sandbox blocks outbound DNS/port 25, so `npm run smoke` there reports every domain as `no_mx`. Run the smoke script on your own host before relying on real-world results.
+**Not verified in the build sandbox:** live DNS and live SMTP. That sandbox blocks outbound DNS/port 25, so `npm run smoke` there reports `dns_error` / "verification unavailable" (a resolver that answers NXDOMAIN for everything is detected and never reported as "no mail server"). Run the smoke script on your own host before relying on real-world results.
 
 ## Honest limitations
 SMTP verification is probabilistic. Google Workspace, Microsoft 365 and many gateways accept every address (catch-all) or refuse probing; those come back `risky`/`unknown`. A result is `valid` only when the server confirms the mailbox and the domain is not catch-all. No tool can guarantee deliverability. Probing from an IP can affect its reputation; keep volumes modest.
+
+## Safety guards
+MX hosts that are, or resolve to, loopback / private / link-local / internal addresses are never probed (the server connects to the vetted IP), so the tool cannot be pointed at your internal network.
 
 ## Responsible use
 For legitimate outreach only. Comply with GDPR, CAN-SPAM, CASL and LinkedIn's terms. Rate limiting is built in so the tool is not suited to mass harvesting.

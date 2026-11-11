@@ -10,19 +10,19 @@ let srv: FakeSmtp | undefined;
 afterEach(async () => { await srv?.close(); srv = undefined; });
 
 const resolverTo = (host: string | null): Resolver => ({
-  resolveMx: async () => { if (!host) throw Object.assign(new Error('x'), { code: 'ENODATA' }); return [{ exchange: host, priority: 1 }]; },
+  resolveMx: async (d) => { if (d === 'google.com') return [{ exchange: 'mx.g.test', priority: 1 }]; if (!host) throw Object.assign(new Error('x'), { code: 'ENODATA' }); return [{ exchange: host, priority: 1 }]; },
   resolve4: async () => { throw Object.assign(new Error('x'), { code: 'ENOTFOUND' }); },
 });
 async function setup(b: Behavior, env: Record<string, string> = {}) {
   srv = await startFakeSmtp(b);
   const config = loadConfig({ SMTP_PORT: String(srv.port), SMTP_TIMEOUT_MS: '400', ...env });
-  return { config, resolver: resolverTo('127.0.0.1'), limiter: new DomainLimiter(config.domainConcurrency) };
+  return { config, resolver: resolverTo('127.0.0.1'), limiter: new DomainLimiter(config.domainConcurrency), allowPrivateHosts: true };
 }
 const input = { name: 'Jane Doe', domain: 'acme.com' };
 
 describe('loadConfig', () => {
   it('has the documented defaults', () => {
-    expect(loadConfig({})).toEqual({ port: 3000, smtpPort: 25, smtpTimeoutMs: 8000, heloDomain: 'localhost', mailFrom: 'verify@localhost', rateLimitPerMin: 30, domainConcurrency: 2 });
+    expect(loadConfig({})).toEqual({ port: 3000, smtpPort: 25, smtpTimeoutMs: 8000, heloDomain: 'localhost', mailFrom: 'verify@localhost', rateLimitPerMin: 30, domainConcurrency: 2, bulkDeadlineMs: 120000 });
   });
   it('reads overrides and ignores garbage numbers', () => {
     expect(loadConfig({ PORT: '8080', SMTP_PORT: 'abc' })).toMatchObject({ port: 8080, smtpPort: 25 });
@@ -90,5 +90,32 @@ describe('findEmail', () => {
     const r = await findEmail({ url: 'https://www.linkedin.com/in/madonna', domain: 'https://www.acme.com/x' }, deps);
     expect(r.results).toHaveLength(1);
     expect(r.results[0]).toMatchObject({ email: 'madonna@acme.com', status: 'valid' });
+  });
+});
+
+describe('SSRF guard: never probes internal hosts', () => {
+  const blocked = ['localhost', '127.0.0.1', '10.0.0.5', '169.254.169.254', '192.168.1.9', '172.20.0.1', 'metadata.google.internal', 'foo.localhost', '::1'];
+  it.each(blocked)('MX %s', async (host) => {
+    let calls = 0;
+    const probe: typeof smtpProbe = async () => { calls++; return { outcome: 'accept', code: 250 }; };
+    const r = await findEmail(input, { config: loadConfig({}), resolver: resolverTo(host), probe });
+    expect(calls).toBe(0);
+    expect(r.verificationAvailable).toBe(false);
+    expect(r.results.every((c) => c.status === 'unknown' && c.reason === 'blocked_host')).toBe(true);
+  });
+  it('blocks a public-looking MX hostname whose A record is private', async () => {
+    let calls = 0;
+    const resolver: Resolver = { resolveMx: async () => [{ exchange: 'mx.evil.test', priority: 1 }], resolve4: async () => ['10.1.2.3'] };
+    const probe: typeof smtpProbe = async () => { calls++; return { outcome: 'accept', code: 250 }; };
+    const r = await findEmail(input, { config: loadConfig({}), resolver, probe });
+    expect(calls).toBe(0);
+    expect(r.results[0]!.reason).toBe('blocked_host');
+  });
+  it('probes the vetted public IP, not the hostname', async () => {
+    const seen = new Set<string>();
+    const resolver: Resolver = { resolveMx: async () => [{ exchange: 'mx.acme.com', priority: 1 }], resolve4: async () => ['93.184.216.34'] };
+    const probe: typeof smtpProbe = async (h) => { seen.add(h); return { outcome: 'reject', code: 550 }; };
+    await findEmail(input, { config: loadConfig({}), resolver, probe });
+    expect([...seen]).toEqual(['93.184.216.34']);
   });
 });

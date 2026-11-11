@@ -10,8 +10,9 @@ const probe: typeof smtpProbe = async (_h, email) =>
   email === 'jane.doe@acme.com' ? { outcome: 'accept', code: 250 } : { outcome: 'reject', code: 550 };
 
 let app: FastifyInstance;
-const make = (env: Record<string, string> = {}) => (app = buildApp({ config: loadConfig({ RATE_LIMIT_PER_MIN: '1000', ...env }), resolver, probe }));
-afterEach(async () => { await app?.close(); });
+let customProbe: typeof smtpProbe | undefined;
+const make = (env: Record<string, string> = {}) => (app = buildApp({ config: loadConfig({ RATE_LIMIT_PER_MIN: '1000', ...env }), resolver, probe: customProbe ?? probe, allowPrivateHosts: true }));
+afterEach(async () => { await app?.close(); customProbe = undefined; });
 
 function multipart(content: string | Buffer, filename = 'in.csv', field = 'file') {
   const b = '----testboundary';
@@ -102,6 +103,26 @@ describe('POST /api/find/bulk', () => {
     expect((await app.inject({ method: 'POST', url: '/api/find/bulk', ...multipart('foo,bar\n1,2\n') })).statusCode).toBe(400);
     expect((await app.inject({ method: 'POST', url: '/api/find/bulk', ...multipart(Buffer.from([0, 255, 254, 1])) })).statusCode).toBe(400);
     expect((await app.inject({ method: 'POST', url: '/api/find/bulk', payload: {} })).statusCode).toBe(400);
+  });
+  it('stops starting new rows after the bulk deadline and says so per row', async () => {
+    customProbe = async (_h, email) => { await new Promise((r) => setTimeout(r, 120)); return email === 'jane.doe@acme.com' ? { outcome: 'accept', code: 250 } : { outcome: 'reject', code: 550 }; };
+    make({ BULK_DEADLINE_MS: '50', SMTP_TIMEOUT_MS: '1000' });
+    const csv = 'name,domain\n' + Array.from({ length: 14 }, (_, i) => `Pa${i} Xb,acme.com`).join('\n');
+    const res = await app.inject({ method: 'POST', url: '/api/find/bulk', ...multipart(csv) });
+    expect(res.statusCode).toBe(200);
+    const rows = res.json().rows as { row: number; result?: unknown; error?: string }[];
+    expect(rows).toHaveLength(14);
+    expect(rows.some((r) => r.result)).toBe(true);
+    const skipped = rows.filter((r) => r.error && /time limit/i.test(r.error));
+    expect(skipped.length).toBeGreaterThan(0);
+  });
+  it('bulk has its own much lower rate limit', async () => {
+    make({ RATE_LIMIT_PER_MIN: '6' });
+    const ok = await app.inject({ method: 'POST', url: '/api/find/bulk', ...multipart('name,domain\nJane Doe,acme.com\n') });
+    const limited = await app.inject({ method: 'POST', url: '/api/find/bulk', ...multipart('name,domain\nJane Doe,acme.com\n') });
+    expect(ok.statusCode).toBe(200);
+    expect(limited.statusCode).toBe(429);
+    expect(limited.json().error.code).toBe('rate_limited');
   });
   it('BOM + CRLF file works end to end', async () => {
     make();

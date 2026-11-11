@@ -1,5 +1,6 @@
 import { parse } from 'csv-parse/sync';
 import type { FindResult } from './engine/findEmail.js';
+import { normalizeDomain } from './engine/domain.js';
 import { InputError, type FindInput } from './engine/types.js';
 
 export const MAX_BULK_ROWS = 200;
@@ -37,7 +38,9 @@ export function parseBulkCsv(buf: Buffer): { rows: BulkRow[]; errors: BulkRowErr
     throw new InputError('invalid_input', `Could not read CSV: ${(e as Error).message}`);
   }
   if (!headerMap.url && !headerMap.name)
-    throw new InputError('invalid_input', 'CSV needs a "url" column or a "name" column (plus "domain" or "company")');
+    throw new InputError('invalid_input', 'CSV needs a "url" column or a "name" column');
+  if (!headerMap.domain && !headerMap.company)
+    throw new InputError('invalid_input', 'CSV needs a "domain" column (LinkedIn URLs do not reveal the company domain)');
 
   const rows: BulkRow[] = [];
   const errors: BulkRowError[] = [];
@@ -51,7 +54,9 @@ export function parseBulkCsv(buf: Buffer): { rows: BulkRow[]; errors: BulkRowErr
     const anyValue = Object.values(record).some((v) => v && String(v).trim());
     if (!anyValue) continue;
     if (++nonEmpty > MAX_BULK_ROWS) throw new InputError('invalid_input', `Too many rows: the limit is ${MAX_BULK_ROWS}`);
+    if (!input.domain && input.company && normalizeDomain(input.company)) input.domain = input.company;
     if (!input.url && !input.name) errors.push({ row: info.lines, message: 'Row needs a url or name' });
+    else if (!input.domain) errors.push({ row: info.lines, message: 'Row needs a domain' });
     else rows.push({ row: info.lines, input });
   }
   return { rows, errors };

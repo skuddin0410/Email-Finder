@@ -32,6 +32,15 @@ describe('parseBulkCsv', () => {
     expect(() => parseBulkCsv(buf('name,domain\n"unterminated,acme.com\n'))).toThrowError();
     expect(() => parseBulkCsv(Buffer.from([0, 1, 2, 255, 254]))).toThrowError();
   });
+  it('requires a domain (or company) column: LinkedIn URLs do not reveal the company', () => {
+    expect(() => parseBulkCsv(buf('url\nhttps://linkedin.com/in/jane-doe\n'))).toThrowError(/domain/i);
+    expect(() => parseBulkCsv(buf('name\nJane Doe\n'))).toThrowError(/domain/i);
+  });
+  it('uses a company value that is a domain, and flags rows with no domain', () => {
+    const { rows, errors } = parseBulkCsv(buf('name,company,domain\nJane Doe,acme.com,\nAnn Lee,Acme Inc,\n'));
+    expect(rows).toEqual([{ row: 2, input: { name: 'Jane Doe', company: 'acme.com', domain: 'acme.com' } }]);
+    expect(errors).toEqual([{ row: 3, message: expect.stringMatching(/domain/i) }]);
+  });
   it('rows with neither url nor name become per-row errors', () => {
     const { rows, errors } = parseBulkCsv(buf('url,name,domain\n,,acme.com\nhttps://linkedin.com/in/a-b,,x.com\n'));
     expect(rows).toHaveLength(1);

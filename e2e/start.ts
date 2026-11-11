@@ -20,6 +20,6 @@ const resolver: Resolver = {
 };
 
 const config = loadConfig({ SMTP_PORT: String(port), SMTP_TIMEOUT_MS: '1500', RATE_LIMIT_PER_MIN: '1000' });
-const app = buildApp({ config, resolver, staticDir: new URL('../web/dist', import.meta.url).pathname });
+const app = buildApp({ config, resolver, allowPrivateHosts: true, staticDir: new URL('../web/dist', import.meta.url).pathname });
 await app.listen({ port: 4173, host: '127.0.0.1' });
 console.log('e2e server ready on :4173');

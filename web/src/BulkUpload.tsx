@@ -29,7 +29,7 @@ export default function BulkUpload() {
   return (
     <>
       <form onSubmit={submit} className="card">
-        <p className="muted">CSV with a <code>url</code> column, or <code>name</code> plus <code>domain</code>. Up to 200 rows.</p>
+        <p className="muted">CSV with a <code>url</code> or <code>name</code> column plus a <code>domain</code> column (LinkedIn URLs don't reveal the company). Up to 200 rows.</p>
         <label>CSV file
           <input type="file" accept=".csv,text/csv" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
         </label>

@@ -9,7 +9,7 @@ import type { Resolver } from './engine/mx.js';
 import type { smtpProbe } from './engine/smtp.js';
 import { InputError, type FindInput } from './engine/types.js';
 
-export interface AppDeps { config: Config; resolver?: Resolver; probe?: typeof smtpProbe; staticDir?: string }
+export interface AppDeps { config: Config; resolver?: Resolver; probe?: typeof smtpProbe; staticDir?: string; allowPrivateHosts?: boolean }
 
 const FIELDS: (keyof FindInput)[] = ['url', 'name', 'company', 'domain'];
 function readBody(body: unknown): FindInput {
@@ -28,7 +28,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   const { config } = deps;
   const app = Fastify({ logger: false, bodyLimit: 1_000_000 });
   const limiter = new DomainLimiter(config.domainConcurrency);
-  const engineDeps = { config, resolver: deps.resolver, probe: deps.probe, limiter };
+  const engineDeps = { config, resolver: deps.resolver, probe: deps.probe, limiter, allowPrivateHosts: deps.allowPrivateHosts };
 
   // Registered before rate-limit so asset requests are not counted against the API limit.
   if (deps.staticDir) app.register(fastifyStatic, { root: deps.staticDir });
@@ -54,7 +54,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
   r.post('/api/find', async (req) => findEmail(readBody(req.body), engineDeps));
 
-  r.post('/api/find/bulk', async (req) => {
+  const bulkMax = Math.max(1, Math.floor(config.rateLimitPerMin / 6));
+  r.post('/api/find/bulk', { config: { rateLimit: { max: bulkMax, timeWindow: '1 minute' } } }, async (req) => {
     if (!req.isMultipart()) throw new InputError('invalid_input', 'Upload a CSV as multipart/form-data field "file"');
     const file = await req.file();
     if (!file) throw new InputError('invalid_input', 'No file uploaded');
@@ -63,10 +64,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const { rows, errors } = parseBulkCsv(buf);
 
     const outcomes: BulkOutcome[] = errors.map((e) => ({ row: e.row, input: {}, error: e.message }));
+    const deadline = Date.now() + config.bulkDeadlineMs;
     let next = 0;
     const worker = async () => {
       while (next < rows.length) {
         const { row, input } = rows[next++]!;
+        if (Date.now() > deadline) { outcomes.push({ row, input, error: 'Skipped: bulk time limit reached, resubmit these rows' }); continue; }
         try { outcomes.push({ row, input, result: await findEmail(input, engineDeps) }); }
         catch (e) { outcomes.push({ row, input, error: e instanceof InputError ? e.message : 'Lookup failed' }); }
       }

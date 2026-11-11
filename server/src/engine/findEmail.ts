@@ -1,6 +1,8 @@
 import type { Config } from '../config.js';
 import { normalizeDomain } from './domain.js';
-import { mxLookup, type Resolver } from './mx.js';
+import net from 'node:net';
+import { isBlockedAddress, isBlockedHostname } from './hostGuard.js';
+import { mxLookup, systemResolver, type Resolver } from './mx.js';
 import { parseInput } from './parseInput.js';
 import { generatePatterns } from './patterns.js';
 import { scoreResult, type Candidate } from './score.js';
@@ -14,7 +16,7 @@ export interface FindResult {
   verificationAvailable: boolean;
   results: Candidate[];
 }
-export interface FindDeps { config: Config; resolver?: Resolver; probe?: typeof smtpProbe; limiter?: DomainLimiter }
+export interface FindDeps { config: Config; resolver?: Resolver; probe?: typeof smtpProbe; limiter?: DomainLimiter; /** Tests only: allow probing loopback/private hosts. Never enable in production. */ allowPrivateHosts?: boolean }
 
 /** Caps simultaneous SMTP probes per target domain, shared across concurrent requests. */
 export class DomainLimiter {
@@ -29,6 +31,16 @@ export class DomainLimiter {
       this.waiters.get(domain)?.shift()?.();
     }
   }
+}
+
+/** Returns a vetted public IPv4 to connect to, or null if the host is (or resolves to) anything internal. */
+async function vetHost(host: string, resolver: Resolver): Promise<string | null> {
+  if (net.isIP(host)) return isBlockedAddress(host) ? null : host;
+  if (isBlockedHostname(host)) return null;
+  let ips: string[];
+  try { ips = await resolver.resolve4(host); } catch { return null; }
+  if (!ips.length || ips.some(isBlockedAddress)) return null;
+  return ips[0]!;
 }
 
 export async function findEmail(input: FindInput, deps: FindDeps): Promise<FindResult> {
@@ -49,7 +61,11 @@ export async function findEmail(input: FindInput, deps: FindDeps): Promise<FindR
     return { ...base, catchAll: 'unknown', verificationAvailable: false, results: patterns.map((p) => mk(p, { status: 'unknown', confidence: 0, reason: 'dns_error' })) };
   }
 
-  const host = mx.hosts[0]!;
+  let host: string | null = null;
+  if (deps.allowPrivateHosts) host = mx.hosts[0]!;
+  else for (const h of mx.hosts) { host = await vetHost(h, deps.resolver ?? systemResolver); if (host) break; }
+  if (!host)
+    return { ...base, catchAll: 'unknown', verificationAvailable: false, results: patterns.map((p) => mk(p, { status: 'unknown', confidence: 0, reason: 'blocked_host' })) };
   const opts: ProbeOpts = { port: config.smtpPort, timeoutMs: config.smtpTimeoutMs, helo: config.heloDomain, mailFrom: config.mailFrom };
   const limiter = deps.limiter ?? new DomainLimiter(config.domainConcurrency);
   const rawProbe = deps.probe ?? smtpProbe;
