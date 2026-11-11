@@ -10,10 +10,10 @@ export type Behavior =
 
 export interface FakeSmtp { port: number; rcpts: string[]; dataSeen: number; closed: number; close(): Promise<void> }
 
-const listen = (srv: { listen(p: number, h: string, cb: () => void): unknown }, addr: () => unknown) =>
-  new Promise<number>((res) => srv.listen(0, '127.0.0.1', () => res((addr() as net.AddressInfo).port)));
+const listen = (srv: { listen(p: number, h: string, cb: () => void): unknown }, addr: () => unknown, at: { host?: string; port?: number }) =>
+  new Promise<number>((res) => srv.listen(at.port ?? 0, at.host ?? '127.0.0.1', () => res((addr() as net.AddressInfo).port)));
 
-export async function startFakeSmtp(b: Behavior): Promise<FakeSmtp> {
+export async function startFakeSmtp(b: Behavior, at: { host?: string; port?: number } = {}): Promise<FakeSmtp> {
   const state = { rcpts: [] as string[], dataSeen: 0, closed: 0 };
 
   if (b.mode === 'drop' || b.mode === 'slow') {
@@ -24,7 +24,7 @@ export async function startFakeSmtp(b: Behavior): Promise<FakeSmtp> {
       if (b.mode === 'drop') s.destroy();
       else setTimeout(() => s.writable && s.write('220 slow ready\r\n'), b.delayMs);
     });
-    const port = await listen(srv, () => srv.address());
+    const port = await listen(srv, () => srv.address(), at);
     return { port, ...state, close: () => new Promise((r) => { sockets.forEach((s) => s.destroy()); srv.close(() => r()); }) } as FakeSmtp;
   }
 
@@ -41,7 +41,7 @@ export async function startFakeSmtp(b: Behavior): Promise<FakeSmtp> {
     onData(stream, _s, cb) { state.dataSeen++; stream.resume(); stream.on('end', () => cb()); },
     onClose() { state.closed++; },
   });
-  const port = await listen(server, () => server.server.address());
+  const port = await listen(server, () => server.server.address(), at);
   const handle: FakeSmtp = {
     port,
     get rcpts() { return state.rcpts; },
