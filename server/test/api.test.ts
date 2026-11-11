@@ -131,3 +131,17 @@ describe('POST /api/find/bulk', () => {
     expect(res.json().rows).toHaveLength(1);
   });
 });
+
+describe('trustProxy (needed behind Vercel/any reverse proxy)', () => {
+  const hit = (xff: string) => app.inject({ method: 'POST', url: '/api/find', payload: {}, headers: { 'x-forwarded-for': xff } });
+  it('off by default: X-Forwarded-For cannot dodge the limit', async () => {
+    app = buildApp({ config: loadConfig({ RATE_LIMIT_PER_MIN: '2' }) });
+    const codes = [(await hit('1.1.1.1')).statusCode, (await hit('2.2.2.2')).statusCode, (await hit('3.3.3.3')).statusCode];
+    expect(codes).toEqual([400, 400, 429]);
+  });
+  it('on: each real client IP gets its own bucket', async () => {
+    app = buildApp({ config: loadConfig({ RATE_LIMIT_PER_MIN: '2' }), trustProxy: true });
+    const codes = [(await hit('1.1.1.1')).statusCode, (await hit('2.2.2.2')).statusCode, (await hit('3.3.3.3')).statusCode, (await hit('3.3.3.3')).statusCode, (await hit('3.3.3.3')).statusCode];
+    expect(codes).toEqual([400, 400, 400, 400, 429]);
+  });
+});

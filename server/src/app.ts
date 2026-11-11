@@ -9,7 +9,7 @@ import type { Resolver } from './engine/mx.js';
 import type { smtpProbe } from './engine/smtp.js';
 import { InputError, type FindInput } from './engine/types.js';
 
-export interface AppDeps { config: Config; resolver?: Resolver; probe?: typeof smtpProbe; staticDir?: string; allowPrivateHosts?: boolean }
+export interface AppDeps { config: Config; resolver?: Resolver; probe?: typeof smtpProbe; staticDir?: string; allowPrivateHosts?: boolean; /** Trust X-Forwarded-For. Enable ONLY behind a reverse proxy you control (e.g. Vercel). */ trustProxy?: boolean }
 
 const FIELDS: (keyof FindInput)[] = ['url', 'name', 'company', 'domain'];
 function readBody(body: unknown): FindInput {
@@ -26,7 +26,7 @@ function readBody(body: unknown): FindInput {
 
 export function buildApp(deps: AppDeps): FastifyInstance {
   const { config } = deps;
-  const app = Fastify({ logger: false, bodyLimit: 1_000_000 });
+  const app = Fastify({ logger: false, bodyLimit: 1_000_000, trustProxy: deps.trustProxy ?? false });
   const limiter = new DomainLimiter(config.domainConcurrency);
   const engineDeps = { config, resolver: deps.resolver, probe: deps.probe, limiter, allowPrivateHosts: deps.allowPrivateHosts };
 
